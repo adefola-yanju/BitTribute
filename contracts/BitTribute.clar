@@ -279,3 +279,100 @@
       (settings (unwrap! (map-get? creator-settings creator) ERR-NOT-FOUND))
       (reward (get reward-per-engagement settings))
     )
+    (if (and (get is-active settings) (> reward u0))
+      (begin
+        (try! (stx-transfer? reward (as-contract tx-sender) creator))
+        (map-set creator-settings creator
+          (merge settings { total-distributed: (+ (get total-distributed settings) reward) })
+        )
+        (ok reward)
+      )
+      (ok u0)
+    )
+  )
+)
+
+(define-private (is-valid-engagement-type (engagement-type (string-ascii 20)))
+  (or
+    (is-eq engagement-type "like")
+    (or
+      (is-eq engagement-type "share")
+      (or
+        (is-eq engagement-type "comment")
+        (is-eq engagement-type "follow")
+      )
+    )
+  )
+)
+
+;; PUBLIC INTERFACE FUNCTIONS
+
+(define-public (initialize-user-profile)
+  (let ((user tx-sender))
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (is-none (map-get? user-profiles user)) ERR-ALREADY-EXISTS)
+
+    (map-set user-profiles user {
+      reputation-score: u100,
+      last-activity-block: stacks-block-height,
+      total-earnings: u0,
+      engagement-count: u0,
+      reputation-nft-id: none,
+      membership-nft-id: none,
+    })
+    (ok true)
+  )
+)
+
+(define-public (setup-creator-profile
+    (threshold uint)
+    (reward-per-engagement uint)
+  )
+  (let ((creator tx-sender))
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (> threshold u0) ERR-INVALID-THRESHOLD)
+    (asserts! (> reward-per-engagement u0) ERR-INVALID-AMOUNT)
+
+    (map-set creator-settings creator {
+      earnings-threshold: threshold,
+      reward-per-engagement: reward-per-engagement,
+      is-active: true,
+      total-distributed: u0,
+    })
+    (ok true)
+  )
+)
+
+(define-public (tip-creator
+    (creator principal)
+    (amount uint)
+  )
+  (let ((tipper tx-sender))
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (>= amount MIN-TIP-AMOUNT) ERR-INVALID-AMOUNT)
+    (asserts! (not (is-eq tipper creator)) ERR-UNAUTHORIZED)
+
+    ;; Execute STX transfer to creator
+    (try! (stx-transfer? amount tipper creator))
+
+    ;; Update reputation scores
+    (try! (update-reputation-score tipper u50))
+    (try! (update-reputation-score creator u100))
+
+    ;; Record engagement
+    (map-set engagement-history {
+      user: tipper,
+      target: creator,
+      block-height: stacks-block-height,
+    } {
+      engagement-type: "tip",
+      amount: amount,
+      timestamp: stacks-block-height,
+    })
+
+    ;; Process engagement rewards
+    (try! (process-engagement-reward creator))
+
+    (ok true)
+  )
+)
