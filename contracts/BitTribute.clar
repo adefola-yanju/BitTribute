@@ -376,3 +376,108 @@
     (ok true)
   )
 )
+
+(define-public (engage-with-creator
+    (creator principal)
+    (engagement-type (string-ascii 20))
+  )
+  (let (
+      (user tx-sender)
+      (engagement-key {
+        user: user,
+        target: creator,
+        block-height: stacks-block-height,
+      })
+    )
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (not (is-eq user creator)) ERR-UNAUTHORIZED)
+    (asserts! (is-valid-engagement-type engagement-type) ERR-INVALID-AMOUNT)
+
+    ;; Record engagement activity
+    (map-set engagement-history engagement-key {
+      engagement-type: engagement-type,
+      amount: u0,
+      timestamp: stacks-block-height,
+    })
+
+    ;; Update reputation scores
+    (try! (update-reputation-score user u25))
+    (try! (update-reputation-score creator u50))
+
+    (ok true)
+  )
+)
+
+(define-public (mint-reputation-certificate)
+  (let (
+      (user tx-sender)
+      (profile (unwrap! (map-get? user-profiles user) ERR-NOT-FOUND))
+      (current-reputation (unwrap! (get-current-reputation user) ERR-NOT-FOUND))
+    )
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (is-none (get reputation-nft-id profile)) ERR-ALREADY-EXISTS)
+    (asserts! (>= current-reputation u500) ERR-INSUFFICIENT-BALANCE)
+
+    (let ((nft-id (try! (mint-reputation-nft user current-reputation))))
+      (map-set user-profiles user
+        (merge profile { reputation-nft-id: (some nft-id) })
+      )
+      (ok nft-id)
+    )
+  )
+)
+
+(define-public (mint-membership-certificate)
+  (let (
+      (user tx-sender)
+      (profile (unwrap! (map-get? user-profiles user) ERR-NOT-FOUND))
+      (current-reputation (unwrap! (get-current-reputation user) ERR-NOT-FOUND))
+      (tier (calculate-tier-for-reputation current-reputation))
+    )
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (is-none (get membership-nft-id profile)) ERR-ALREADY-EXISTS)
+    (asserts! (>= current-reputation u1000) ERR-INSUFFICIENT-BALANCE)
+
+    (let ((nft-id (try! (mint-membership-nft user tier))))
+      (map-set user-profiles user
+        (merge profile { membership-nft-id: (some nft-id) })
+      )
+      (ok nft-id)
+    )
+  )
+)
+
+(define-public (update-creator-settings
+    (threshold uint)
+    (reward uint)
+  )
+  (let (
+      (creator tx-sender)
+      (current-settings (unwrap! (map-get? creator-settings creator) ERR-NOT-FOUND))
+    )
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+    (asserts! (> threshold u0) ERR-INVALID-THRESHOLD)
+
+    (map-set creator-settings creator
+      (merge current-settings {
+        earnings-threshold: threshold,
+        reward-per-engagement: reward,
+      })
+    )
+    (ok true)
+  )
+)
+
+(define-public (toggle-creator-status)
+  (let (
+      (creator tx-sender)
+      (current-settings (unwrap! (map-get? creator-settings creator) ERR-NOT-FOUND))
+    )
+    (asserts! (not (is-contract-paused)) ERR-UNAUTHORIZED)
+
+    (map-set creator-settings creator
+      (merge current-settings { is-active: (not (get is-active current-settings)) })
+    )
+    (ok true)
+  )
+)
